@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语C虚拟商城后台【修复admin】</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui, sans-serif}
+body{background:#181824;color:#eee;padding:16px;max-width:900px;margin:0 auto}
+h1,h2,h3{color:#d6c0ff;margin-bottom:12px}
+.card{background:#242438;padding:18px;border-radius:12px;margin:14px 0;border:1px solid #444}
+input,textarea,select{width:100%;padding:10px;margin:7px 0;background:#333450;border:1px solid #555;border-radius:8px;color:#fff}
+button{padding:10px 14px;border:0;border-radius:8px;background:#7c4dff;color:#fff;cursor:pointer;margin:4px}
+button:hover{background:#643bdb}
+.btn-danger{background:#b83854}
+.btn-danger:hover{background:#942c43}
+.nav{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.tab{display:none}
+.tab.active{display:block}
+.goods-item{display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid #444;border-radius:8px;margin:8px 0}
+.log{background:#1c1c2c;padding:10px;border-radius:8px;white-space:pre-wrap;font-size:14px;min-height:120px}
+</style>
+</head>
+<body>
+<h1>语C虚拟商城</h1>
+<div class="nav">
+  <button onclick="switchTab('login')">登录/注册</button>
+  <button onclick="switchTab('info')">个人信息</button>
+  <button onclick="switchTab('shop')">商城</button>
+  <button onclick="switchTab('apply')">金币增补申请</button>
+  <button onclick="switchTab('admin')">管理员后台</button>
+  <button class="btn-danger" onclick="logout()">退出登录</button>
+</div>
+
+<!-- 登录注册 -->
+<div class="tab active" id="login">
+  <div class="card">
+    <h2>账号登录</h2>
+    <input id="loginUser" placeholder="用户名">
+    <input id="loginPwd" type="password" placeholder="密码">
+    <button onclick="login()">登录</button>
+  </div>
+  <div class="card">
+    <h2>新玩家注册</h2>
+    <input id="regUser" placeholder="设置用户名">
+    <input id="regPwd" type="password" placeholder="设置密码">
+    <button onclick="register()">注册</button>
+  </div>
+</div>
+
+<!-- 个人信息 -->
+<div class="tab" id="info">
+  <div class="card">
+    <h2>个人角色信息</h2>
+    <input id="pifu" placeholder="皮下ID">
+    <input id="charname" placeholder="皮名/角色名">
+    <textarea id="charDesc" placeholder="角色简介"></textarea>
+    <div>当前金币：<span id="goldShow">0</span></div>
+    <button onclick="saveInfo()">保存信息</button>
+  </div>
+</div>
+
+<!-- 商城 -->
+<div class="tab" id="shop">
+  <div class="card">
+    <h2>商品列表</h2>
+    <div id="goodsList"></div>
+  </div>
+</div>
+
+<!-- 金币申请 -->
+<div class="tab" id="apply">
+  <div class="card">
+    <h2>金币增补申请</h2>
+    <input id="applyNum" type="number" placeholder="想要增加的金币数量">
+    <textarea id="applyReason" placeholder="申请理由（任务、剧情奖励等）"></textarea>
+    <button onclick="submitApply()">提交申请给群主</button>
+    <div class="log" id="applyLog"></div>
+  </div>
+</div>
+
+<!-- 管理员后台 -->
+<div class="tab" id="admin">
+  <div class="card">
+    <h2>管理员面板（仅群主）</h2>
+    <div id="adminPanel"></div>
+  </div>
+</div>
+
+<script>
+// 商品库，你可以自行增删改
+const goodsData = [
+  {id:1,name:"普通药剂",price:20,desc:"基础恢复药剂"},
+  {id:2,name:"传送卷轴",price:50,desc:"单次场景传送"},
+  {id:3,name:"稀有材料包",price:120,desc:"剧情道具材料"},
+  {id:4,name:"特殊身份凭证",price:300,desc:"解锁特殊权限"}
+];
+const ADMIN_USER = "admin";
+const ADMIN_PWD = "admin123";
+
+// 存储key
+const KEY_USER = "lc_shop_users";
+const KEY_APPLY = "lc_shop_apply";
+const KEY_CURR = "lc_shop_current";
+
+// 读取数据
+function getUsers(){
+  let d = localStorage.getItem(KEY_USER);
+  let users = d?JSON.parse(d):{}
+  // 自动初始化管理员账号
+  if(!users[ADMIN_USER]){
+    users[ADMIN_USER] = {pwd:ADMIN_PWD, pifu:"群主", charname:"管理员", charDesc:"", gold:0};
+    saveUsers(users);
+  }
+  return users;
+}
+function saveUsers(obj){
+  localStorage.setItem(KEY_USER, JSON.stringify(obj))
+}
+function getApplies(){
+  let d = localStorage.getItem(KEY_APPLY);
+  return d?JSON.parse(d):[]
+}
+function saveApplies(arr){
+  localStorage.setItem(KEY_APPLY, JSON.stringify(arr))
+}
+function getCurrUser(){
+  return localStorage.getItem(KEY_CURR)
+}
+function setCurrUser(u){
+  localStorage.setItem(KEY_CURR, u)
+}
+function clearCurr(){
+  localStorage.removeItem(KEY_CURR)
+}
+
+// 标签切换
+function switchTab(tabId){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'))
+  document.getElementById(tabId).classList.add('active')
+  if(tabId==="shop") renderShop();
+  if(tabId==="admin") renderAdmin();
+  if(tabId==="info") loadInfo();
+  if(tabId==="apply") renderApplyLog();
+}
+
+// 注册
+function register(){
+  const u = document.getElementById("regUser").value.trim();
+  const p = document.getElementById("regPwd").value;
+  if(!u||!p){alert("用户名和密码不能为空");return}
+  const users = getUsers();
+  if(users[u]){alert("用户名已存在");return}
+  users[u] = {pwd:p, pifu:"", charname:"", charDesc:"", gold:0};
+  saveUsers(users);
+  alert("✅ 注册成功，请登录");
+  document.getElementById("regUser").value="";
+  document.getElementById("regPwd").value="";
+}
+
+// 登录
+function login(){
+  const u = document.getElementById("loginUser").value.trim();
+  const p = document.getElementById("loginPwd").value;
+  const users = getUsers();
+  if(!users[u]){alert("账号不存在");return}
+  if(users[u].pwd !== p){alert("密码错误");return}
+  setCurrUser(u);
+  alert("✅ 登录成功："+u);
+  switchTab("info");
+}
+
+// 退出
+function logout(){
+  clearCurr();
+  alert("已退出登录");
+  switchTab("login");
+}
+
+// 个人信息
+function loadInfo(){
+  const cu = getCurrUser();
+  if(!cu) return;
+  const u = getUsers()[cu];
+  document.getElementById("pifu").value = u.pifu||"";
+  document.getElementById("charname").value = u.charname||"";
+  document.getElementById("charDesc").value = u.charDesc||"";
+  document.getElementById("goldShow").innerText = u.gold;
+}
+function saveInfo(){
+  const cu = getCurrUser();
+  if(!cu){alert("请先登录");return}
+  const users = getUsers();
+  users[cu].pifu = document.getElementById("pifu").value.trim();
+  users[cu].charname = document.getElementById("charname").value.trim();
+  users[cu].charDesc = document.getElementById("charDesc").value.trim();
+  saveUsers(users);
+  alert("✅ 信息保存成功");
+  loadInfo();
+}
+
+// 商城渲染
+function renderShop(){
+  const wrap = document.getElementById("goodsList");
+  const cu = getCurrUser();
+  const users = getUsers();
+  if(!cu){wrap.innerHTML="<p>请先登录</p>";return}
+  const user = users[cu];
+  let html = "";
+  goodsData.forEach(g=>{
+    html += `
+    <div class="goods-item">
+      <div>
+        <b>${g.name}</b>｜${g.desc}<br>价格：${g.price}金币
+      </div>
+      <button onclick="buyGoods(${g.id})">购买</button>
+    </div>`
+  })
+  wrap.innerHTML = html;
+}
+function buyGoods(gid){
+  const cu = getCurrUser();
+  if(!cu){alert("请登录");return}
+  const users = getUsers();
+  const user = users[cu];
+  const g = goodsData.find(x=>x.id===gid);
+  if(user.gold < g.price){alert("❌ 金币不足！需要向群主申请金币");return}
+  user.gold -= g.price;
+  saveUsers(users);
+  alert(`✅ 购买【${g.name}】成功，扣除${g.price}金币`);
+  renderShop();
+  loadInfo();
+}
+
+// 金币申请
+function submitApply(){
+  const cu = getCurrUser();
+  if(!cu){alert("请登录");return}
+  const num = Number(document.getElementById("applyNum").value);
+  const reason = document.getElementById("applyReason").value.trim();
+  if(!num||num<=0||!reason){alert("填写正确金额和理由");return}
+  const arr = getApplies();
+  arr.push({user:cu,num,reason,time:new Date().toLocaleString(),status:"待处理"});
+  saveApplies(arr);
+  alert("✅ 申请已提交给群主，等待审核！");
+  document.getElementById("applyNum").value="";
+  document.getElementById("applyReason").value="";
+  renderApplyLog();
+}
+function renderApplyLog(){
+  const cu = getCurrUser();
+  if(!cu) return;
+  const all = getApplies().filter(x=>x.user===cu);
+  let txt = "你的申请记录：\n";
+  if(all.length===0) txt+="暂无申请";
+  all.forEach(a=>{
+    txt += `[${a.time}] 申请+${a.num}金币｜${a.reason}｜状态：${a.status}\n`
+  })
+  document.getElementById("applyLog").innerText = txt;
+}
+
+// 管理员面板
+function renderAdmin(){
+  const cu = getCurrUser();
+  const wrap = document.getElementById("adminPanel");
+  if(cu!==ADMIN_USER){
+    wrap.innerHTML="<p>⚠️ 只有管理员账号可以使用该面板</p>";
+    return;
+  }
+  const users = getUsers();
+  const applies = getApplies();
+  let html = "<h3>玩家列表</h3>";
+  for(let uname in users){
+    const u = users[uname];
+    html += `<div style="border:1px solid #444;padding:8px;margin:6px;border-radius:8px">
+      账号：${uname}｜皮下：${u.pifu}｜皮名：${u.charname}｜金币：${u.gold}
+      <input type="number" id="add_${uname}" placeholder="输入要增加的金币">
+      <button onclick="addGold('${uname}')">发放金币</button>
+    </div>`
+  }
+  html += "<h3>待审核金币申请</h3>";
+  applies.forEach((item,idx)=>{
+    html += `<div style="border:1px solid #444;padding:8px;margin:6px;border-radius:8px">
+      申请人：${item.user}｜金额：${item.num}｜理由：${item.reason}
+      <br>时间：${item.time}｜状态：${item.status}
+      <button onclick="approve(${idx})">通过</button>
+      <button class="btn-danger" onclick="reject(${idx})">驳回</button>
+    </div>`
+  })
+  wrap.innerHTML = html;
+}
+function addGold(username){
+  const val = document.getElementById("add_"+username).value;
+  const num = Number(val);
+  if(!num||num<=0) return alert("输入有效数字");
+  const users = getUsers();
+  users[username].gold += num;
+  saveUsers(users);
+  alert(`✅ 给【${username}】发放${num}金币`);
+  renderAdmin();
+}
+function approve(idx){
+  const arr = getApplies();
+  const item = arr[idx];
+  const users = getUsers();
+  users[item.user].gold += item.num;
+  item.status = "✅已通过";
+  saveUsers(users);
+  saveApplies(arr);
+  alert("✅ 申请已通过，金币发放完成");
+  renderAdmin();
+}
+function reject(idx){
+  const arr = getApplies();
+  arr[idx].status = "❌已驳回";
+  saveApplies(arr);
+  alert("已驳回申请");
+  renderAdmin();
+}
+</script>
+</body>
+</html>
